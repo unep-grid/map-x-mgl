@@ -1,4 +1,85 @@
+
 ## Changelog
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.37-rc1' target='_blank'>1.8.37-rc1</a>
+  - APP
+    - Fix bug when having no view in project triggered an error in reactViewsCompactVector list ( used in source overlap tool )
+    - Set map popup opacity at 0.7 (instead of 0.4) when mouse not hover
+    - Migration during routines: impose sequential approach. Migration should always happen before dict update and index update. 
+    - Search tool : should fix dates range issues, when a single date was set in date range input, the input was set empty (-> invalid), while the filter or/and badge were still active
+    - Static mode : added button in legend's view title to open the metadata panel
+    - Story maps : ignore invalid view id in views list evaluation. Those views id's probably have been added manually.
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.36-beta' target='_blank'>1.8.36-beta</a>
+  - APP/API
+    - Should solve issue with geometry validation tool not updated as a reactive select input not triggered
+    - Quick solve issue with public list of view used in story map editor : bad commit at some point. TODO: use search api for instead
+    - Set max upload size at 200MiB
+    - Added new simple type conversions -> PG to js. Bigint were handled as string, which produced a bug
+    - Fix wrong use of mglRemoveView -> app crashed when removing a view from 'manage external views'
+    - Promoted use of promise in download source handler 
+    - Fixed an issue with empty files being generated (txt.info and metadata.json)
+    - Solved a bug where clicked features were not filtered properly, therefore, breaking the highlighter tool
+    - Set max line for style dev editor : Infinity was not appropritate for large styles (performance drop)
+    - Use chroma -> darken to set feature secondary color (e.g. polygon borders)
+    - Lower opacity for map popup if mouse not over 
+    - Modal body : presence of a unnecessary scrollbar : overflow auto only on y 
+    - Fixed style issue with drop down filter menu in vector attribute table: bad zIndex of handsontable, as it's not relative to table's container 
+    - Attribute table : issue with mouse hover patched this to solve highlight issue
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.35-beta' target='_blank'>1.8.35-beta</a>
+  - APP
+    -  Search tool :
+      - Fixed issue with date input not linked to the filter 'badge'
+      - Improved "year buttons" in result list : it should toggle between default value and selected value
+    - Base admin sub national borders style : do not show before zoom 4
+    - Dev style editor : do not try to diff at reset
+    - Added modal panel to get search API key and configuration -> tools tab
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.34-beta' target='_blank'>1.8.34-beta</a>
+  - APP
+    - Integration of new UN layer for countries borders, countries names, and other official UN sub-national borders when available; Tweaked style : added an attribute 'group_size' to deterministically set country label style according to country size (countries classified on a scale from 0 to 100, based on geographic area)
+    - To facilitate map style development: Added a minimal style editor mapbox-gl-js (json) to quickly test the style tweaks. Available using `mx.helpers.showDevStyleEditor`
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.33-beta' target='_blank'>1.8.33-beta</a>
+  - APP
+    - Search tool :
+      - Button "Clear search" has now an "undo" icon, and triggers reset year filters too. It's disabled if no text, year or facet filters are set.
+      - Red flag/badge is now visible if year filters are set, too.
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.32-alpha' target='_blank'>1.8.32-alpha</a>
+  - APP
+    - Added basic user preference storage ( not yet available in UI )
+    - Reworked temporary view management : store preference; added "unlink" button to remove temporary view; text changes
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.31-alpha' target='_blank'>1.8.31-alpha</a>
+  - API/APP
+    - Improved handling of view not linked, added using drag-drop or search tool 
+    - Fixed missing license in source metadata viewer
+    - Fixed issue with local cache, that was hanging sometimes
+    - Various minor changes in UI, e.g. views badges colors
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.30-alpha' target='_blank'>1.8.30-alpha</a>
+  - API
+    - Faster vector source bounding box. E.g. used in vector views -> Zoom to extent. This issue penalized some features such as views settings or static viewer.
+  - APP
+    - Fixed bug where sprites/pattern were not shown in legends,
+    - Bug correction / improvement: partial refactoring of the construction of vector layers. Should be faster, while rendering the order correctly, especially when using overlay patterns using sprite.
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.29-alpha' target='_blank'>1.8.29-alpha</a>
+  - APP
+    - Solves missing sprites in legends; 
+    - Cleaning old 'resources' config from legacy mapx version -> probable breaking changes
+    - Minor improvements of the search tool
+      - Sync date keyword with slider + keyword emphasis
+      - Solve nested facet groups not updating order when filtered
+      - Year range slider: allow partial date ranges instead of strict min/max bounds.
+      - Metadata viewer : handle cases where no concept is set
+      - Fixed broken external link button 
+    - Gemet search + dropdown :
+      - Avoid displaying full description of gemet dropdown: use tooltip instead, but keep the same heading. 
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.28-alpha' target='_blank'>1.8.28-alpha</a>
+  - API :
+    - Missing 'create extension pg_trgm' in migration script
+- <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.27-alpha' target='_blank'>1.8.27-alpha</a>
+  - APP / API
+    - GEMET 
+        - Reshaped gemet local db,
+        - Integration of multilingual keywords from gemet in the search index generator,
+        - Modified api search by text, by list of concept : faster, more accurate, query by multiple concept ids,
+        - Adapted metadata visualizer,
+        - Integration of multilingual GEMET keywords in the search tool
 - <a href='https://github.com/unep-grid/map-x-mgl/tree/1.8.26-alpha' target='_blank'>1.8.26-alpha</a>
   - APP
     - GEMET 

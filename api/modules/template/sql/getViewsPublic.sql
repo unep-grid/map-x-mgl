@@ -24,7 +24,17 @@ projects_public as (
 * Filter view by type
 */
 views_subset as (
- SELECT *
+  SELECT
+  id,
+  editor,
+  target,
+  date_modified,
+  data - '{attribute,table}'::text[] as data,
+  type,
+  pid,
+  project,
+  readers,
+  editors
   FROM mx_views_latest v
   WHERE 
   (
@@ -101,6 +111,15 @@ views_public as (
   FROM views_subset vo, views_id_merge vm
   WHERE vo.id = vm.id_view
 ),
+/**
+* Views with source metadata
+*/ 
+-- views_source_meta as (
+  -- SELECT vp.*,
+  -- coalesce(s.data #> '{meta}',vp.data #> '{source,meta}','{}'::jsonb) as _meta
+  -- FROM views_public vp
+  -- FULL OUTER JOIN  mx_sources s ON vp.data #>> '{source.layerInfo.name}' = s.id
+-- ),
 /**
 * views public with project title
 */

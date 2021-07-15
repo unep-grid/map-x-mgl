@@ -1,7 +1,14 @@
-import {el, elSpanTranslate, elButtonIcon} from '../el_mapx/index.js';
-import {viewsListAddSingle} from './../mx_helper_map_view_ui.js';
 import {ButtonCircle} from './../icon_flash';
-import {modalConfirm} from './../mx_helper_modal.js';
+import {modal, modalConfirm} from './../mx_helper_modal.js';
+import {storyRead} from './../mx_helper_story.js';
+import {viewToMetaModal} from './../mx_helper_map_view_metadata.js';
+import {getDictItem} from './../mx_helper_language.js';
+import {EventSimple} from './../listener_store';
+import {viewsListAddSingle} from './../mx_helper_map_view_ui.js';
+import {el, elSpanTranslate, elButtonIcon} from '../el_mapx/index.js';
+import {prefGet, prefSet} from './../user_pref';
+import {isDate} from './../is_test/index.js';
+
 import {
   zoomToViewId,
   getView,
@@ -10,19 +17,12 @@ import {
   viewRemove,
   getViewsOpen
 } from './../mx_helper_map.js';
-
-import {storyRead} from './../mx_helper_story.js';
-
-import {viewToMetaModal} from './../mx_helper_map_view_metadata.js';
-import {getDictItem} from './../mx_helper_language.js';
-import {EventSimple} from './../listener_store';
 import {
   isStory,
   isView,
   isArray,
   isStringRange,
-  isBoolean,
-  isUndefined
+  isBoolean
 } from './../is_test/index.js';
 
 import {def} from './default.js';
@@ -41,6 +41,7 @@ class Search extends EventSimple {
     }
     s._init = true;
     s._filters = {};
+
     /**
      * Dynamic import
      */
@@ -48,8 +49,8 @@ class Search extends EventSimple {
     await import('./style_flatpickr.less');
     await import('/node_modules/nouislider/distribute/nouislider.css');
 
-    (s._nouislider = (await import('nouislider')).default),
-      (s._MeiliSearch = (await import('meilisearch')).MeiliSearch);
+    s._nouislider = (await import('nouislider')).default;
+    s._MeiliSearch = (await import('meilisearch')).MeiliSearch;
     s._flatpickr = (await import('flatpickr')).default;
     s._flatpickr_langs = await import('./flatpickr_locales');
     s._elContainer = document.querySelector(s.opt('container'));
@@ -61,17 +62,9 @@ class Search extends EventSimple {
     /**
      * Build ui
      */
-    await s.setLanguage();
+    await s.setLanguage({reset: false});
     await s.build();
 
-    /*
-     * Autocomplete (mhé)
-     */
-    if (s.opt('autocomplete')) {
-      s.Tribute = (await import('tributejs')).default;
-      import('./style_tribute.less');
-      s._init_tribute(s._elInput, s._elInputContainer);
-    }
     await s.update();
     s.fire('ready');
     return s;
@@ -94,13 +87,52 @@ class Search extends EventSimple {
     return !!this._init;
   }
 
-  async setLanguage(lang) {
+  showApiConfig() {
     const s = this;
-    if (lang) {
-      s.setOpt({language: lang});
+    if (s._elModalShowApiConfig) {
+      return;
+    }
+    const url = `${s.opt('protocol')}${s.opt('host')}:${s.opt('port')}`;
+    const elConfig = el('div', [
+      el('label', 'Search engine API key'),
+      el('pre', s.opt('key')),
+      el('label', 'Search engine host'),
+      el('pre', url),
+      el('label', 'Example'),
+      el(
+        'details',
+        {open: true},
+        el('summary', 'CURL'),
+        el(
+          'pre',
+          `curl '${url}/indexes/views_en/search' \\\n` +
+            `-H 'X-Meili-API-Key: ${s.opt('key')}' \\\n` +
+            `--data-raw '{"q":"water"}' \\\n` +
+            `--compressed;\n`
+        )
+      )
+    ]);
+    s._elModalShowApiConfig = modal({
+      title: 'Search engine API',
+      content: elConfig,
+      addBackground: true,
+      onClose: () => {
+        delete s._elModalShowApiConfig;
+      }
+    });
+  }
+
+  async setLanguage(opt) {
+    const s = this;
+    opt = Object.assign({}, {reset: true, language: null}, opt);
+    if (opt.language) {
+      s.setOpt({language: opt.language});
     }
     await s.setIndex();
     await s.setLocaleFlatpickr();
+    if (opt.reset) {
+      s.reset();
+    }
   }
 
   async setLocaleFlatpickr(lang) {
@@ -117,8 +149,11 @@ class Search extends EventSimple {
      * instead of language code.
      * -> `locs.default[lang]` as workaround ?
      */
-
-    const locs = await s._flatpickr_langs[lang]();
+    let locFun = s._flatpickr_langs[lang];
+    if (!locFun) {
+      locFun = s._flatpickr_langs['en'];
+    }
+    const locs = await locFun();
     let loc = s._flatpickr.l10ns.default;
 
     if (locs) {
@@ -279,48 +314,26 @@ class Search extends EventSimple {
 
     for (let attr of attrKeys) {
       const aConf = s.opt('keywords').find((k) => k.type == attr);
-      const groups = aConf.groups;
+      const subgroups = aConf.subgroups;
       /**
        * source_keyword, source_keywords_m49, view_type
        */
-      let elFacetItems;
-      const elFacetGroup = el(
-        'div',
-        {
-          class: 'search--filter-facets-group'
-        },
-        [
-          el(
-            'label',
-            {
-              class: 'search--filter-group-title'
-            },
-            elSpanTranslate(`search_${attr}`)
-          ),
-          (elFacetItems = el('div', {
-            class: 'search--filter-facets-items'
-          }))
-        ]
-      );
+      const {elFacetGroup, elFacetItems} = build_facets_group(attr);
       s._facets_containers.push(elFacetItems);
       frag.appendChild(elFacetGroup);
 
       /**
-       * Create group
+       * Create sub group
        */
 
-      if (groups) {
-        for (let g of groups) {
-          g._el_group = el('div');
-          g._el_group_container = el('div', [
-            el(
-              'div',
-              {class: 'search--filter-group-title'},
-              elSpanTranslate(g.key)
-            ),
-            g._el_group
-          ]);
-          elFacetItems.appendChild(g._el_group_container);
+      if (subgroups) {
+        elFacetItems.className = '';
+        for (let g of subgroups) {
+          const {elFacetGroup: elFg, elFacetItems: elFi} = build_facets_group(
+            g.key
+          );
+          elFacetItems.appendChild(elFg);
+          g._elSubFacetItems = elFi;
         }
       }
 
@@ -354,90 +367,46 @@ class Search extends EventSimple {
             id: k
           });
           s._facets[k] = fc;
-          if (!groups) {
+          if (!subgroups) {
             elFacetItems.appendChild(fc.el);
             continue;
           }
-          for (let g of groups) {
+          for (let g of subgroups) {
             const isMatch = value.match(g.match);
             const isExclude = value.match(g.exclude);
             if (isMatch && !isExclude) {
-              g._el_group.appendChild(fc.el);
+              g._elSubFacetItems.appendChild(fc.el);
             }
           }
         }
       }
     }
+
+    function build_facets_group(key) {
+      let elFacetItems;
+      const elFacetGroup = el(
+        'div',
+        {
+          class: 'search--filter-facets-group'
+        },
+        [
+          el(
+            'label',
+            {
+              class: 'search--filter-group-title'
+            },
+            elSpanTranslate(`search_${key}`)
+          ),
+          (elFacetItems = el('div', {
+            class: 'search--filter-facets-items'
+          }))
+        ]
+      );
+
+      return {elFacetItems, elFacetGroup};
+    }
+
     return frag;
-  }
-
-  /**
-   * Init tribute autocomplete
-   * NOTE: to be removed
-   */
-  _init_tribute(elTarget, elContainer) {
-    const s = this;
-
-    const tributeAttributes = {
-      menuContainer: elContainer,
-      autocompleteMode: true,
-      positionMenu: true,
-      values: async (text, cb) => {
-        /**
-         * Query index on keyword attributes only
-         * and transform hits to distinct list of keywords,
-         * with translation of available
-         */
-        const attrKeys = s.opt('keywords').map((k) => k.type);
-        const results = await s.search({
-          q: text,
-          attributesToRetrieve: attrKeys,
-          facetsDistribution: attrKeys
-        });
-        const v = [];
-        const seen = {};
-
-        for (let hit of results.hits) {
-          //{source_keyword:[]}
-          for (let type in hit) {
-            let keywords = hit[type];
-            // ["COD","CHE"]
-            if (!isArray(keywords)) {
-              keywords = [keywords];
-            }
-            for (let keyword of keywords) {
-              let hash = type + keyword;
-              if (!seen[hash]) {
-                seen[hash] = true;
-                v.push({
-                  type: type,
-                  key: keyword,
-                  value: await getDictItem(keyword)
-                });
-              }
-            }
-          }
-        }
-        cb(v);
-      },
-      noMatchTemplate: () => {
-        return null;
-      },
-      selectTemplate: (item) => {
-        if (isUndefined(item)) {
-          return null;
-        }
-        return item.original.value;
-      },
-      menuItemTemplate: function(item) {
-        return item.original.value;
-      }
-    };
-    /**
-     * Create new Tribute instance
-     */
-    s._tribute = new s.Tribute(tributeAttributes);
-    s._tribute.attach(elTarget);
   }
 
   async _build_filter_years_range() {
@@ -498,19 +467,30 @@ class Search extends EventSimple {
     /**
      * Update filters
      */
-    function update(d) {
+    async function update(d) {
       const start = parseInt(d[0]);
       const end = parseInt(d[1]);
       const attrStart = 'range_start_at_year';
       const attrEnd = 'range_end_at_year';
-      const strFilter = `${attrStart} >= ${start} AND ${attrEnd} <= ${end}`;
+      /**
+       * Strict
+       * :) [--|___-|--]
+       * :( [-_|___-|--]
+       * const strFilter = `${attrStart} >= ${start} AND ${attrEnd} <= ${end}`;
+       *
+       * Partial
+       * :) [--|___-|--]
+       * :) [-_|___-|--]
+       * :) [--|---_|__]
+       * :( [__|----|--]
+       */
+      const strFilter = `${attrStart} <= ${end} AND ${attrEnd} >= ${start}`;
       elSliderYearInputMin.dataset.year = start;
       elSliderYearInputMax.dataset.year = end;
       s.setFilter('range_years', strFilter);
-      s.update();
+      await s.update();
     }
   }
-
   /**
    * Build filter date for each item in options > attributes > date
    * connect flatpickr and add to UI
@@ -543,7 +523,6 @@ class Search extends EventSimple {
         placeholder: txtPlaceholder,
         id: Math.random().toString(32)
       });
-
       const elFilterDateLabel = el(
         'label',
         {
@@ -552,14 +531,11 @@ class Search extends EventSimple {
         },
         elSpanTranslate(`search_filter_${item.attr}`)
       );
-      const elFilterContainer = el(
-        'div',
-        {class: 'search--filter-date-item'},
-
-        [elFilterDateLabel, elFilterDate]
-      );
+      const elFilterContainer = el('div', {class: 'search--filter-date-item'}, [
+        elFilterDateLabel,
+        elFilterDate
+      ]);
       s._elFiltersDate.appendChild(elFilterContainer);
-
       /**
        * Date picker
        */
@@ -568,31 +544,24 @@ class Search extends EventSimple {
         allowInput: true,
         onChange: async (e) => {
           let strFilter = '';
-          if (item.range) {
-            if (e[0]) {
-              strFilter = `${item.attr} >= ${(e[0] * 1) / 1000}`;
-            }
-            if (e[1]) {
-              strFilter = `${strFilter} AND ${item.attr}<=${(e[1] * 1) / 1000}`;
-            }
-          } else {
-            const isStart = item.attr.includes('_start_');
-
-            if (e[0]) {
-              strFilter = `${item.attr}${isStart ? '>' : '<'}=${(e[0] * 1) /
-                1000}`;
-            }
+          const isDateA = isDate(e[0]);
+          const isDateB = isDate(e[1]);
+          if (item.range && isDateA && isDateB) {
+            strFilter = `${item.attr} >= ${(e[0] * 1) / 1000}`;
+            strFilter = `${strFilter} AND ${item.attr}<=${(e[1] * 1) / 1000}`;
           }
-          console.log({attr: item.attr, filter: strFilter});
+          if (!item.range && isDateA) {
+            const isStart = item.attr.includes('_start_');
+            strFilter = `${item.attr}${isStart ? '>' : '<'}=${(e[0] * 1) /
+              1000}`;
+          }
           s.setFilter(item.attr, strFilter);
           await s.update();
         }
       });
-
       s._flatpickr_filters.push(fpickr);
     }
   }
-
   /**
    * Input builder
    * @param {Options} opt Options
@@ -601,14 +570,15 @@ class Search extends EventSimple {
   async _build_input(opt) {
     const s = this;
     const id = Math.random().toString(32);
-
     opt = Object.assign({}, {key_placeholder: null}, opt);
-
     s._elInput = el('input', {
       class: 'search--input',
       id: id,
       type: 'text',
-      lang_key: opt.key_placeholder,
+      dataset: {
+        lang_key: opt.key_placeholder,
+        lang_type: 'placeholder'
+      },
       placeholder: await getDictItem(opt.key_placeholder),
       on: {
         input: async () => {
@@ -617,32 +587,34 @@ class Search extends EventSimple {
       }
     });
 
+    s._elFilterFlag = el('span', {
+      class: ['search--flag']
+    });
+
+    s._elBtnClear = elButtonIcon('search_clear_query', {
+      icon: 'fa-undo',
+      mode: 'icon',
+      classes: [],
+      dataset: {action: 'search_clear'}
+    });
+
+    s._elBtnToggleFilters = elButtonIcon('search_filters', {
+      icon: 'fa-filter',
+      mode: 'icon',
+      classes: [],
+      dataset: {action: 'toggle_filters'},
+      content: s._elFilterFlag
+    });
+
     s._elInputContainer = el(
       'div',
       {
         class: 'search--input-container'
       },
-      s._elInput,
-      elButtonIcon('search_clear_query', {
-        icon: 'fa-times',
-        mode: 'icon',
-        classes: [],
-        dataset: {action: 'search_clear'}
-      }),
-      elButtonIcon('search_filters', {
-        icon: 'fa-filter',
-        mode: 'icon',
-        classes: [],
-        dataset: {action: 'toggle_filters'},
-        content: s._elFilterFlag = el('span', {
-          class: ['search--flag']
-        })
-      })
+      [s._elInput, s._elBtnClear, s._elBtnToggleFilters]
     );
-
     return s._elInputContainer;
   }
-
   getFacetsArray() {
     const s = this;
     const out = [];
@@ -656,8 +628,14 @@ class Search extends EventSimple {
     return out;
   }
 
+  /**
+   * Clear filters
+   */
   clear() {
     const s = this;
+    if (!s._built) {
+      return;
+    }
     s._elInput.value = '';
     const facets = s.getFacetsArray();
     for (let facet of facets) {
@@ -669,9 +647,30 @@ class Search extends EventSimple {
     for (let date of dates) {
       date.clear();
     }
-    s.update();
+    const yMin = s.opt('dates').year_min;
+    const yMax = s.opt('dates').year_max;
+    s._year_slider.set([yMin, yMax]);
   }
-
+  /**
+   * Reset filters
+   */
+  async reset() {
+    const s = this;
+    if (!s._built) {
+      return;
+    }
+    s._elInput.value = '';
+    const facets = s.getFacetsArray();
+    for (let facet of facets) {
+      facet.destroy();
+    }
+    delete s._facets;
+    const dates = s._flatpickr_filters;
+    for (let date of dates) {
+      date.clear();
+    }
+    await s.update();
+  }
   async _handle_click(e) {
     const s = this;
     const ds = e.target?.dataset || {};
@@ -681,14 +680,16 @@ class Search extends EventSimple {
         case 'search_year_set_min':
           {
             const values = s._year_slider.get();
-            values[0] = ds.year;
+            const change = parseInt(values[0]) !== parseInt(ds.year);
+            values[0] = change ? ds.year : s.opt('dates').year_min;
             s._year_slider.set(values);
           }
           break;
         case 'search_year_set_max':
           {
             const values = s._year_slider.get();
-            values[1] = ds.year;
+            const change = parseInt(values[1]) !== parseInt(ds.year);
+            values[1] = change ? ds.year : s.opt('dates').year_max;
             s._year_slider.set(values);
           }
           break;
@@ -699,11 +700,13 @@ class Search extends EventSimple {
           }
           break;
         case 'update_facet_filter':
-          s.update();
+          await s.update();
+          setTimeout(() => {
+            e.target.scrollIntoView({block: 'center', inline: 'nearest'});
+          }, 200);
           break;
         case 'search_clear':
           {
-            s._elInput.value = '';
             s.vFeedback(e);
             s.clear();
           }
@@ -711,7 +714,7 @@ class Search extends EventSimple {
         case 'search_set_page':
           {
             s.vFeedback(e);
-            s.update(ds.page);
+            await s.update(ds.page);
           }
           break;
         case 'search_keyword_toggle':
@@ -721,21 +724,22 @@ class Search extends EventSimple {
             const facet = s._facets[`${type}:${keyword}`];
             if (facet) {
               facet.checked = !facet.checked;
-              s.update();
+              await s.update();
             }
           }
-
           break;
-        case 'search_view_link': {
-          s.vFeedback(e);
-          const idView = ds.id_view;
-          const urlStatic = new URL(window.location);
-          urlStatic.search = '';
-          urlStatic.pathname = s.opt('link_pathname');
-          urlStatic.searchParams.append('views', idView);
-          urlStatic.searchParams.append('zoomToViews', true);
-          window.open(urlStatic, '_newtab');
-        }
+        case 'search_view_link':
+          {
+            s.vFeedback(e);
+            const idView = ds.id_view;
+            const urlStatic = new URL(window.location);
+            urlStatic.search = '';
+            urlStatic.pathname = s.opt('link_pathname');
+            urlStatic.searchParams.append('views', idView);
+            urlStatic.searchParams.append('zoomToViews', true);
+            window.open(urlStatic, '_newtab');
+          }
+          break;
         case 'search_view_toggle':
           {
             s.vFeedback(e);
@@ -743,23 +747,34 @@ class Search extends EventSimple {
             let view = getView(idView);
             const isValid = isView(view);
             const viewIsOpen = getViewsOpen().includes(idView);
-
             if (!isValid) {
               view = await getViewRemote(idView);
               if (isView(view)) {
-                view._drop_shared = true;
+                view._temp = true;
                 await viewsListAddSingle(view, {open: false});
+                const showNotify = await prefGet(
+                  'pref_show_notify_add_view_temp'
+                );
+                if (showNotify === null || showNotify === true) {
+                  const keepShowing = await modalConfirm({
+                    title: getDictItem('search_view_added_temporarily_title'),
+                    content: getDictItem('search_view_added_temporarily'),
+                    cancel: getDictItem(
+                      'search_view_added_temporarily_ok_no_more'
+                    ),
+                    confirm: getDictItem('search_view_added_temporarily_ok')
+                  });
+                  await prefSet('pref_show_notify_add_view_temp', keepShowing);
+                }
               }
             }
             if (!isView(view)) {
               return;
             }
-
             if (viewIsOpen) {
               await viewRemove(view);
             } else {
               await viewAdd(view);
-
               /**
                * All views exept story : zoom
                */
@@ -771,7 +786,6 @@ class Search extends EventSimple {
               /**
                * Story handling
                */
-
               const confirmed = await modalConfirm({
                 title: elSpanTranslate('search_story_auto_play_confirm_title'),
                 content: elSpanTranslate('search_story_auto_play_confirm')
@@ -788,8 +802,8 @@ class Search extends EventSimple {
         case 'search_show_view_meta':
           {
             const idView = ds.id_view;
-            viewToMetaModal(idView);
             s.vFeedback(e);
+            await viewToMetaModal(idView);
           }
           break;
         default:
@@ -799,20 +813,17 @@ class Search extends EventSimple {
       console.warn('Search action handler failed ', e);
     }
   }
-
   vFeedback(event) {
     new ButtonCircle({
       x: event.clientX,
       y: event.clientY
     });
   }
-
   _build_result_list(hits) {
     const s = this;
     const frag = new DocumentFragment();
     const confKeywords = s.opt('keywords');
-    //const viewsOpen = getViewsOpen();
-
+    const sliderYears = s._year_slider.get().map((v) => parseInt(v * 1));
     for (let v of hits) {
       /**
        * Add keywords buttons
@@ -853,15 +864,19 @@ class Search extends EventSimple {
           }
         }
       }
-
       /**
        * Add years keyword
        */
+      const emphaseYearStart = sliderYears.includes(v.range_start_at_year);
+      const emphaseYearEnd = sliderYears.includes(v.range_end_at_year);
       const elYears = el('div', {class: ['search--button-group']}, [
         el(
           'div',
           {
-            class: ['search--button-keyword'],
+            class: [
+              'search--button-keyword',
+              emphaseYearStart ? `search--button-keyword-enabled` : null
+            ],
             dataset: {
               action: 'search_year_set_min',
               year: v.range_start_at_year
@@ -877,7 +892,10 @@ class Search extends EventSimple {
         el(
           'div',
           {
-            class: ['search--button-keyword'],
+            class: [
+              'search--button-keyword',
+              emphaseYearEnd ? `search--button-keyword-enabled` : null
+            ],
             dataset: {
               action: 'search_year_set_max',
               year: v.range_end_at_year
@@ -891,7 +909,6 @@ class Search extends EventSimple {
           ]
         )
       ]);
-
       /**
        * Add actions
        */
@@ -940,7 +957,6 @@ class Search extends EventSimple {
           )
         ]
       );
-
       frag.appendChild(
         el(
           'div',
@@ -982,30 +998,27 @@ class Search extends EventSimple {
     }
     return frag;
   }
-
   destroy() {
     const s = this;
     s._elSearch.remove();
     s.ac.destroy();
   }
-
   /**
    * Split text on n words using details element.
    * @param {String} str string
    * @param {Integer} max Number of words to use
    * @return {String} If max number of word reached,string with <details>+<summary>
    */
+
   cutext(str, max) {
     max = max || 50;
     // NOTE: Can split html div. but description should not contain html.
     const wrds = (str || '').split(/\b/);
     const strShow = wrds.filter((w, i) => i <= max).join('');
     const strHide = wrds.filter((w, i) => i > max).join('');
-
     if (strHide.length === 0) {
       return el('span', str);
     }
-
     const elSummary = el('summary', strShow);
     const elHide = el('span', strHide);
     return el(
@@ -1017,7 +1030,6 @@ class Search extends EventSimple {
       elHide
     );
   }
-
   /**
    * Format cropped text: add ellipsis when needed
    * @param {String} str Croped tring to format
@@ -1028,15 +1040,17 @@ class Search extends EventSimple {
     if (!isStringRange(str, 1)) {
       return '';
     }
+    if (isStringRange(str, 1, 20)) {
+      return str + ' ';
+    }
     if (str[0] !== str[0].toUpperCase()) {
       str = `…${str}`;
     }
-    if (['.', '!', '?'].indexOf(str[str.length - 1]) === -1) {
+    if (!['.', '!', '?', ')'].includes(str[str.length - 1])) {
       str = `${str}…`;
     }
     return str;
   }
-
   getFilters(op) {
     op = op || 'AND';
     const s = this;
@@ -1050,12 +1064,10 @@ class Search extends EventSimple {
     }
     return filters.join(` ${op} `);
   }
-
   setFilter(id, value) {
     const s = this;
     s._filters[id] = value;
   }
-
   getFiltersFacets(op) {
     const s = this;
     op = op || 'AND';
@@ -1083,7 +1095,6 @@ class Search extends EventSimple {
     }
     return;
   }
-
   /**
    * Check if keyword/tag has enabled facet
    * @param {String} attr Attribute (eg. keyword type)
@@ -1102,12 +1113,50 @@ class Search extends EventSimple {
     }
     return out;
   }
+  hasFilter() {
+    const s = this;
+    const ff = s.getFiltersFacets();
+    return !!ff && !!ff.length;
+  }
+  hasFilterDateSlider() {
+    const s = this;
+    const yMin = s.opt('dates').year_min;
+    const yMax = s.opt('dates').year_max;
+    const yrs = s._year_slider.get().map((v) => parseInt(v * 1));
+    return !yrs.includes(yMin) || !yrs.includes(yMax);
+  }
+  hasFilterDateInput() {
+    const s = this;
+    const dates = s._flatpickr_filters;
+    let out = false;
+    for (let date of dates) {
+      const isRange = date.config.mode === 'range';
+      const sel = date.selectedDates || [];
+      const valid = isRange ? sel.length === 2 : sel.length === 1;
+      out = out || valid;
+    }
+    return out;
+  }
+  hasFilterText() {
+    const s = this;
+    return s._elInput.value.length > 0;
+  }
+  updateFlagAuto() {
+    const s = this;
+    const hasFilter =
+      s.hasFilter() || s.hasFilterDateInput() || s.hasFilterDateSlider();
+    const hasFilterText = s.hasFilterText();
 
-  setFlag(opt) {
-    if (opt.enable) {
-      opt.target.classList.add('active');
+    if (hasFilter) {
+      s._elFilterFlag.classList.add('active');
     } else {
-      opt.target.classList.remove('active');
+      s._elFilterFlag.classList.remove('active');
+    }
+
+    if (hasFilter || hasFilterText) {
+      s._elBtnClear.removeAttribute('disabled');
+    } else {
+      s._elBtnClear.setAttribute('disabled', true);
     }
   }
 
@@ -1125,20 +1174,14 @@ class Search extends EventSimple {
       const attrKeys = s.opt('keywords').map((k) => k.type);
       const strFilters = s.getFilters();
       const facetFilters = s.getFiltersFacets();
-      s.setFlag({
-        target: s._elFilterFlag,
-        enable: !!facetFilters && !!facetFilters.length
-      });
-
+      s.updateFlagAuto();
       /**
        * Prevent extrem quick chamges
        * -> Do not render further.
        */
       if (s._timer_debounce !== timer) {
-        console.log('cancel before search');
         return;
       }
-
       const results = await s.search({
         q: s._elInput.value,
         offset: page * 20,
@@ -1151,30 +1194,24 @@ class Search extends EventSimple {
         facetsDistribution: attrKeys,
         matches: false
       });
-
       /**
        * Search is not cancellable, but if the timer
        * has changed, another request is on its way.
        * -> Do not render further.
        */
       if (s._timer_debounce !== timer) {
-        console.log('cancel after search');
         return;
       }
-
       s._results = results;
-
       await s._update_stats(results);
-
       const fragItems = s._build_result_list(results.hits);
       s._elResults.replaceChildren(fragItems);
       s._update_toggles_icons();
-
       const elPaginationItems = s._build_pagination_items(results);
       s._elPagination.replaceChildren(elPaginationItems);
-
       /**
-       * ⚠️ THIS WORKS ONLY IF THE FIRST RESULT HAVE ALL FACETS
+       * ⚠️  fragile: if the list is not complete, subsequent search
+       * will not display new facets.
        */
 
       if (!s._facets) {
@@ -1187,7 +1224,6 @@ class Search extends EventSimple {
       console.warn('Issue while searching', {error: e});
     }
   }
-
   /**
    * Update open/close tag
    */
@@ -1211,7 +1247,6 @@ class Search extends EventSimple {
       }
     }
   }
-
   /**
    * Search on current index, with default params.
    * @param {Object} opt Options for index.search
@@ -1238,7 +1273,6 @@ class Search extends EventSimple {
     );
     return await s._index.search(search.q, search);
   }
-
   /**
    * Update stats
    */
@@ -1251,30 +1285,22 @@ class Search extends EventSimple {
     const strTime = `${results.processingTimeMs} ms`;
     const strNbHit = `${results.nbHits} `;
     const tmpl = await getDictItem('search_results_stats');
-
     const txt = s.template(tmpl, {strNbHit, strTime, cPage, nPage});
     s._elStatHits.setAttribute('stat', txt);
   }
-
   /**
    * Pagination builder
    */
-
   _build_pagination_items(results) {
-    const s = this;
     const elItems = el('div', {class: ['search--pagination-items']});
-
     const nPage = Math.ceil(results.nbHits / results.limit);
     const cPage =
       Math.ceil(nPage - (results.nbHits - results.offset) / results.limit) - 1;
-
     let type = '';
     let fillerPos = [];
-
     /*
      * Pagination layout
      */
-
     if (nPage <= 10) {
       /**
        * oooooooXoo
@@ -1299,7 +1325,6 @@ class Search extends EventSimple {
       type = '3_5_3';
       fillerPos.push(...[3, nPage - 4]);
     }
-
     /**
      * Populate pagination
      */
@@ -1334,7 +1359,6 @@ class Search extends EventSimple {
           break;
         default:
       }
-
       /**
        * Add filler if needed
        */
@@ -1344,12 +1368,10 @@ class Search extends EventSimple {
         });
         elItems.appendChild(elFiller);
       }
-
       if (add) {
         /**
          * Build item
          */
-
         let elItem;
         const elItemContainer = el(
           'span',
@@ -1368,7 +1390,6 @@ class Search extends EventSimple {
         /**
          * The item is the current page
          */
-
         if (i === cPage) {
           elItem.classList.add('active');
           elItem.setAttribute('disabled', true);
@@ -1382,7 +1403,6 @@ class Search extends EventSimple {
     }
     return elItems;
   }
-
   /**
    * Simple template parser
    * @param {String} template string
@@ -1400,7 +1420,6 @@ class Search extends EventSimple {
     });
   }
 }
-
 class Facet {
   constructor(opt) {
     const fc = this;
@@ -1419,7 +1438,6 @@ class Facet {
     );
     fc.init();
   }
-
   init() {
     const fc = this;
     if (fc._init) {
@@ -1428,7 +1446,10 @@ class Facet {
     fc.build();
     fc._init = true;
   }
-
+  destroy() {
+    const fc = this;
+    fc._elTag.remove();
+  }
   build() {
     const fc = this;
     fc._elCheckbox = el('input', {
@@ -1439,15 +1460,12 @@ class Facet {
       },
       id: Math.random().toString(32)
     });
-
     const elLabelContent = elSpanTranslate(fc._opt.label);
-
     fc._elLabel = el(
       'label',
       {class: 'search--filter-facet-item-label', for: fc._elCheckbox.id},
       elLabelContent
     );
-
     fc._elCount = el('span', {
       count: fc._opt.count,
       class: 'search--filter-facet-item-count'
@@ -1463,26 +1481,21 @@ class Facet {
       [fc._elCheckbox, fc._elLabel, fc._elCount]
     );
   }
-
   get id() {
     return this._opt.id;
   }
-
   get el() {
     return this._elTag;
   }
   get checked() {
     return this._elCheckbox.checked === true;
   }
-
   set checked(enable) {
     this._elCheckbox.checked = enable;
   }
-
   get enable() {
     return this._opt.enable;
   }
-
   set enable(value) {
     const fc = this;
     if (!isBoolean(value)) {
@@ -1523,5 +1536,4 @@ class Facet {
     fc.order = 1000 - c;
   }
 }
-
 export {Search};
